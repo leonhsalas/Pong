@@ -1,0 +1,272 @@
+<style>
+    body{
+        background-color: black;
+    }
+    canvas{
+        border: 5px solid white;
+        border-left: transparent;
+        border-right: transparent;
+    }
+</style>
+
+<canvas></canvas>
+
+<script>
+    const canvas = document.querySelector('canvas')
+    const ctx = canvas.getContext('2d')
+
+    canvas.width = 925
+    canvas.height = 430
+
+    let x = 497.5
+
+    let y = 215
+
+    let dx = 1
+
+    let dy = -1
+
+    let directioncpu = 0
+
+    const paddleX1 = 10
+    
+    let paddleY1 = y - 22
+
+    const paddleX2 = 463.5 
+    
+    let paddleY2 = y - 22
+
+    const paddleX3 = 915
+    
+    let paddleY3 = y - 22
+
+    const paddleX4 = 521.5 
+    
+    let paddleY4 = y - 22
+
+    const paddleX5 = 240
+    
+    let paddleY5 = y - 22
+
+    const paddleX6 = 720
+    
+    let paddleY6 = y - 22
+
+    let uppressed = false
+
+    let downpressed = false
+
+    let oppositedirection = 1
+
+    let squarey = y
+
+    let count = 0
+
+    let dir = 0
+
+    function drawball() {
+        ctx.beginPath()
+        ctx.arc(x, y, 4, 0, Math.PI * 2)
+        ctx.fillStyle = '#fff'
+        ctx.fill()
+        ctx.closePath()
+    }
+
+    function ballMovement() {
+        if (dx == 1) {
+            x += 3
+        } else {
+            x -= 3
+        }
+
+        if (dy == 1) {
+            y -= 3
+        } else {
+            y += 3
+        }
+
+        if (y < 4) {
+            dy = -dy
+        } else if (y > canvas.height - 4) {
+            dy = -dy
+        }
+
+        if (x < 4) {
+            document.location.reload()
+        } else if (x > canvas.width - 4) {
+            document.location.reload()
+        }
+
+        
+    }
+
+    function drawObstacles() {
+        ctx.beginPath()
+        ctx.arc(360, squarey, 16, 0, Math.PI * 2)
+        ctx.fillStyle = 'red'
+        ctx.fill()
+        ctx.closePath()
+        ctx.beginPath()
+        ctx.arc(360, squarey, 8, 0, Math.PI * 2)
+        ctx.fillStyle = 'yellow'
+        ctx.fill()
+        ctx.closePath()
+        ctx.beginPath()
+        ctx.arc(135, squarey, 16, 0, Math.PI * 2)
+        ctx.fillStyle = 'red'
+        ctx.fill()
+        ctx.closePath()
+        ctx.beginPath()
+        ctx.arc(135, squarey, 8, 0, Math.PI * 2)
+        ctx.fillStyle = 'yellow'
+        ctx.fill()
+        ctx.closePath()
+        ctx.beginPath()
+        ctx.arc(625, squarey, 16, 0, Math.PI * 2)
+        ctx.fillStyle = 'red'
+        ctx.fill()
+        ctx.closePath()
+        ctx.beginPath()
+        ctx.arc(625, squarey, 8, 0, Math.PI * 2)
+        ctx.fillStyle = 'yellow'
+        ctx.fill()
+        ctx.closePath()
+        ctx.beginPath()
+        ctx.arc(825, squarey, 16, 0, Math.PI * 2)
+        ctx.fillStyle = 'red'
+        ctx.fill()
+        ctx.closePath()
+        ctx.beginPath()
+        ctx.arc(825, squarey, 8, 0, Math.PI * 2)
+        ctx.fillStyle = 'yellow'
+        ctx.fill()
+        ctx.closePath()   
+    }
+
+    function ObstaclesMovement() {
+        if (dir == 0 && squarey + 16 < canvas.height) {
+            squarey += 4
+        } else if (dir == 1 && squarey > 0) {
+            squarey -= 4
+        } else {
+            if (dir == 0) {
+                dir = 1
+            } else if (dir == 1) {
+                dir = 0
+            }
+        }
+        
+    }
+
+    function drawPaddle() {
+        ctx.fillRect(paddleX1, paddleY1, 10, 50)
+        ctx.fillRect(paddleX2, paddleY2, 10, 50)
+        ctx.fillRect(paddleX3, paddleY3, 10, 50)
+        ctx.fillRect(paddleX4, paddleY4, 10, 50)
+        ctx.fillRect(paddleX5, paddleY5, 10, 50)
+        ctx.fillRect(paddleX6, paddleY6, 10, 50)
+    }
+
+    function cleanCanvas() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+    }
+
+    function PaddleMovement() {
+        if (uppressed && paddleY1 > 0 && paddleY2 > 0) {
+            paddleY1 -= 3
+            paddleY2 -= 3
+            paddleY5 += 3   
+        } else if (downpressed && paddleY1 + 50 < canvas.height && paddleY2 + 50 < canvas.height) {
+            paddleY1 += 3
+            paddleY2 += 3
+            paddleY5 -= 3
+        }
+    }
+
+    function CpuMovement() {
+        if (directioncpu == 0 && paddleY3 + 50 < canvas.height && paddleY4 + 50 < canvas.height && oppositedirection == 1 && paddleY6 > 0) {
+            paddleY4 += 3
+            paddleY3 += 3
+            paddleY6 -= 3
+        } else if (directioncpu == 1 && paddleY3 > 0 && paddleY4 > 0 && oppositedirection == 0 && paddleY6 + 50 < canvas.height) {
+            paddleY4 -= 3
+            paddleY3 -= 3
+            paddleY6 += 3
+        } else {
+            if (directioncpu == 0 && oppositedirection == 1) {
+                directioncpu = 1
+                oppositedirection = 0
+            } else if (directioncpu == 1 && oppositedirection == 0) {
+                directioncpu = 0
+                oppositedirection = 1
+            }
+        }
+    }
+
+    function initEvents() {
+        document.addEventListener('keydown', keyDownHandler)
+        document.addEventListener('keyup', keyUpHandler)
+
+        function keyDownHandler (event) {
+            const {key} = event
+            if (key == 'ArrowUp' ) {
+                uppressed = true
+            } else if (key == 'ArrowDown') {
+                downpressed = true
+            }
+        }
+        function keyUpHandler (event) {
+            const {key} = event
+            if (key == 'ArrowUp') {
+                uppressed = false
+            } else if (key == 'ArrowDown') {
+                downpressed = false
+            }
+        }
+    }
+
+     function collisionDetection() {
+        if (x >= paddleX1 - 7 && x <= paddleX1 && y <= paddleY1 + 45 && y >= paddleY1 - 45) {
+            dx = -dx
+        } else if (x >= paddleX2 - 7 && x <= paddleX2 && y <= paddleY2 + 45 && y >= paddleY2 - 45) {
+            dx = -dx
+        } else if (x >= paddleX3 - 7 && x <= paddleX3 && y <= paddleY3 + 45 && y >= paddleY3 - 45) {
+            dx = -dx
+        } else if (x >= paddleX4 - 7 && x <= paddleX4 && y <= paddleY4 + 45 && y >= paddleY4 - 45) {
+            dx = -dx
+        } else if (x >= paddleX5 - 7 && x <= paddleX5 && y <= paddleY5 + 45 && y >= paddleY5 - 45) {
+            dx = -dx
+        } else if (x >= paddleX6 - 7 && x <= paddleX6 && y <= paddleY6 + 45 && y >= paddleY6 - 45) {
+            dx = -dx
+        } else if (x >= paddleX1 + 7 && x <= paddleX1 && y <= paddleY1 + 45 && y >= paddleY1 - 45) {
+            dx = -dx
+        } else if (x >= paddleX2 + 7 && x <= paddleX2 && y <= paddleY2 + 45 && y >= paddleY2 - 45) {
+            dx = -dx
+        } else if (x >= paddleX3 + 7 && x <= paddleX3 && y <= paddleY3 + 45 && y >= paddleY3 - 45) {
+            dx = -dx
+        } else if (x >= paddleX4 + 7 && x <= paddleX4 && y <= paddleY4 + 45 && y >= paddleY4 - 45) {
+            dx = -dx
+        } else if (x >= paddleX5 + 7 && x <= paddleX5 && y <= paddleY5 + 45 && y >= paddleY5 - 45) {
+            dx = -dx
+        } else if (x >= paddleX6 + 7 && x <= paddleX6 && y <= paddleY6 + 45 && y >= paddleY6 - 45) {
+            dx = -dx
+        }
+     }
+
+    function draw() {
+        cleanCanvas()
+        drawball()
+        drawPaddle()
+        drawObstacles()
+
+        PaddleMovement()
+        CpuMovement()
+        ObstaclesMovement()
+        ballMovement()
+        collisionDetection()
+        window.requestAnimationFrame(draw)
+    }
+
+    draw()
+    initEvents()
+</script>
