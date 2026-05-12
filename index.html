@@ -1,8 +1,18 @@
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <style>
-    body{
+    * { margin: 0; padding: 0; }
+    body {
         background-color: black;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 100vh;
+        overflow: hidden;
+        touch-action: none;
+        -webkit-user-select: none;
+        user-select: none;
     }
-    canvas{
+    canvas {
         border: 5px solid white;
         border-left: transparent;
         border-right: transparent;
@@ -10,263 +20,430 @@
 </style>
 
 <canvas></canvas>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1/dist/peerjs.min.js"></script>
 
 <script>
     const canvas = document.querySelector('canvas')
     const ctx = canvas.getContext('2d')
 
-    canvas.width = 925
-    canvas.height = 430
+    const W = 925
+    const H = 430
+    canvas.width = W
+    canvas.height = H
 
-    let x = 497.5
+    function resize() {
+        const ratio = W / H
+        const vw = window.innerWidth
+        const vh = window.innerHeight
+        if (vw / vh > ratio) {
+            canvas.style.height = vh + 'px'
+            canvas.style.width = (vh * ratio) + 'px'
+        } else {
+            canvas.style.width = vw + 'px'
+            canvas.style.height = (vw / ratio) + 'px'
+        }
+    }
+    window.addEventListener('resize', resize)
+    resize()
 
-    let y = 215
+    const BALL_R = 4
+    const BALL_SPEED = 3
+    const PW = 10
+    const PH = 50
+    const PS = 3
+    const OBS_R = 16
+    const OBS_INNER_R = 8
+    const WIN_SCORE = 5
+    const CPU_SPEED_MAIN = 4
+    const CPU_SPEED_MID = 3.5
+    const CPU_SPEED_FIELD = 3
 
-    let dx = 1
+    let playerScore = 0
+    let cpuScore = 0
+    let gameOver = false
 
-    let dy = -1
+    let bx, by, bdx, bdy
 
-    let directioncpu = 0
+    const paddles = [
+        { x: 10 },
+        { x: 463.5 },
+        { x: 240 },
+        { x: 915, hesitate: 0, offset: 0 },
+        { x: 521.5, hesitate: 0, offset: 0 },
+        { x: 720, hesitate: 0, offset: 0 }
+    ]
 
-    const paddleX1 = 10
-    
-    let paddleY1 = y - 22
+    const obstacles = [
+        { x: 135, y: 0, speed: 0, dir: 0 },
+        { x: 360, y: 0, speed: 0, dir: 0 },
+        { x: 625, y: 0, speed: 0, dir: 0 },
+        { x: 825, y: 0, speed: 0, dir: 0 }
+    ]
+    let obsChangeTimer = 0
+    let nextObsChange = 0
 
-    const paddleX2 = 463.5 
-    
-    let paddleY2 = y - 22
+    let upPressed = false
+    let downPressed = false
+    let touchUp = false
+    let touchDown = false
+    let restartRequested = false
 
-    const paddleX3 = 915
-    
-    let paddleY3 = y - 22
+    // Networking
+    let isGuest = false
+    let isMultiplayer = false
+    let peer = null
+    let conn = null
+    let guestInput = { up: false, down: false, restart: false }
+    let receivedState = null
+    let prevState = null
+    let stateTime = 0
+    let prevStateTime = 0
+    let gameId = ''
+    let joinUrl = ''
+    let linkCopied = false
+    let netConnected = false
+    let netError = false
 
-    const paddleX4 = 521.5 
-    
-    let paddleY4 = y - 22
+    const params = new URLSearchParams(window.location.search)
+    const joinParam = params.get('join')
 
-    const paddleX5 = 240
-    
-    let paddleY5 = y - 22
+    function setupNetwork() {
+        if (typeof Peer === 'undefined') return
 
-    const paddleX6 = 720
-    
-    let paddleY6 = y - 22
+        if (joinParam) {
+            isGuest = true
+            peer = new Peer()
+            peer.on('open', () => {
+                conn = peer.connect(joinParam, { reliable: true })
+                conn.on('open', () => { netConnected = true })
+                conn.on('data', data => {
+                    prevState = receivedState
+                    prevStateTime = stateTime
+                    receivedState = data
+                    stateTime = performance.now()
+                })
+                conn.on('close', () => { netConnected = false; conn = null })
+            })
+            peer.on('error', () => { netError = true })
+        } else {
+            gameId = 'pong' + Math.random().toString(36).substr(2, 6)
+            joinUrl = window.location.origin + window.location.pathname + '?join=' + gameId
+            peer = new Peer(gameId)
+            peer.on('connection', c => {
+                conn = c
+                isMultiplayer = true
+                resetAll()
+                conn.on('data', data => { guestInput = data })
+                conn.on('close', () => {
+                    isMultiplayer = false
+                    conn = null
+                    guestInput = { up: false, down: false, restart: false }
+                })
+            })
+            peer.on('error', () => {})
+        }
+    }
 
-    let uppressed = false
+    function randomizeObstacles() {
+        for (const o of obstacles) {
+            o.speed = 2 + Math.random() * 4
+            o.dir = Math.random() > 0.5 ? 1 : -1
+        }
+        obsChangeTimer = 0
+        nextObsChange = 180 + Math.floor(Math.random() * 300)
+    }
 
-    let downpressed = false
+    function resetBall() {
+        bx = 497.5
+        by = H / 2
+        bdx = Math.random() > 0.5 ? 1 : -1
+        bdy = Math.random() > 0.5 ? 1 : -1
+    }
 
-    let oppositedirection = 1
+    function moveCpuPaddle(paddle, speed) {
+        if (paddle.hesitate > 0) { paddle.hesitate--; return }
+        if (Math.random() < 0.02) paddle.hesitate = 25 + Math.floor(Math.random() * 35)
+        if (Math.random() < 0.015) paddle.offset = (Math.random() - 0.5) * PH * 1.5
+        const target = by + (paddle.offset || 0)
+        const center = paddle.y + PH / 2
+        const diff = target - center
+        if (Math.abs(diff) > 2) {
+            paddle.y += diff > 0 ? Math.min(speed, diff) : Math.max(-speed, diff)
+        }
+        paddle.y = Math.max(0, Math.min(H - PH, paddle.y))
+    }
 
-    let squarey = y
+    function resetAll() {
+        const mid = H / 2 - PH / 2
+        for (const p of paddles) p.y = mid
+        for (const o of obstacles) { o.y = H / 2; o.speed = 3; o.dir = 1 }
+        for (let i = 3; i <= 5; i++) { paddles[i].hesitate = 0; paddles[i].offset = 0 }
+        playerScore = 0
+        cpuScore = 0
+        gameOver = false
+        randomizeObstacles()
+        resetBall()
+    }
 
-    let count = 0
+    resetAll()
+    setupNetwork()
 
-    let dir = 0
+    // Input
+    document.addEventListener('keydown', e => {
+        if (e.key === 'ArrowUp') { e.preventDefault(); upPressed = true }
+        if (e.key === 'ArrowDown') { e.preventDefault(); downPressed = true }
+        if (e.key === ' ') restartRequested = true
+    })
+    document.addEventListener('keyup', e => {
+        if (e.key === 'ArrowUp') upPressed = false
+        if (e.key === 'ArrowDown') downPressed = false
+    })
 
-    function drawball() {
+    canvas.addEventListener('touchstart', handleTouch, { passive: false })
+    canvas.addEventListener('touchmove', handleTouch, { passive: false })
+    canvas.addEventListener('touchend', e => {
+        e.preventDefault()
+        touchUp = false
+        touchDown = false
+        if (isGuest && receivedState && receivedState.g) restartRequested = true
+        else if (!isGuest && gameOver) restartRequested = true
+    }, { passive: false })
+
+    function handleTouch(e) {
+        e.preventDefault()
+        if (gameOver) return
+        const rect = canvas.getBoundingClientRect()
+        const t = e.touches[0]
+        const relY = (t.clientY - rect.top) / rect.height
+        touchUp = relY < 0.5
+        touchDown = relY >= 0.5
+    }
+
+    canvas.addEventListener('click', () => {
+        if (!isMultiplayer && !isGuest && joinUrl) {
+            navigator.clipboard.writeText(joinUrl).then(() => {
+                linkCopied = true
+                setTimeout(() => linkCopied = false, 2000)
+            }).catch(() => {})
+        }
+    })
+
+    // Update (host/solo only)
+    function update() {
+        if (gameOver) {
+            if (restartRequested || guestInput.restart) {
+                resetAll()
+                restartRequested = false
+            }
+            return
+        }
+
+        const up = upPressed || touchUp
+        const down = downPressed || touchDown
+
+        if (up) {
+            if (paddles[0].y > 0) paddles[0].y -= PS
+            if (paddles[1].y > 0) paddles[1].y -= PS
+            if (paddles[2].y + PH < H) paddles[2].y += PS
+        }
+        if (down) {
+            if (paddles[0].y + PH < H) paddles[0].y += PS
+            if (paddles[1].y + PH < H) paddles[1].y += PS
+            if (paddles[2].y > 0) paddles[2].y -= PS
+        }
+
+        if (isMultiplayer) {
+            if (guestInput.up) {
+                if (paddles[3].y > 0) paddles[3].y -= PS
+                if (paddles[4].y > 0) paddles[4].y -= PS
+                if (paddles[5].y + PH < H) paddles[5].y += PS
+            }
+            if (guestInput.down) {
+                if (paddles[3].y + PH < H) paddles[3].y += PS
+                if (paddles[4].y + PH < H) paddles[4].y += PS
+                if (paddles[5].y > 0) paddles[5].y -= PS
+            }
+        } else {
+            moveCpuPaddle(paddles[3], CPU_SPEED_MAIN)
+            moveCpuPaddle(paddles[4], CPU_SPEED_MID)
+            moveCpuPaddle(paddles[5], CPU_SPEED_FIELD)
+        }
+
+        obsChangeTimer++
+        if (obsChangeTimer >= nextObsChange) randomizeObstacles()
+
+        for (const o of obstacles) {
+            o.y += o.speed * o.dir
+            if (o.y + OBS_R >= H) { o.y = H - OBS_R; o.dir = -1 }
+            if (o.y - OBS_R <= 0) { o.y = OBS_R; o.dir = 1 }
+        }
+
+        bx += bdx * BALL_SPEED
+        by += bdy * BALL_SPEED
+
+        if (by - BALL_R <= 0) { by = BALL_R; bdy = 1 }
+        if (by + BALL_R >= H) { by = H - BALL_R; bdy = -1 }
+
+        for (const p of paddles) {
+            if (bx + BALL_R > p.x && bx - BALL_R < p.x + PW &&
+                by + BALL_R > p.y && by - BALL_R < p.y + PH) {
+                if (bdx > 0) {
+                    bdx = -1
+                    bx = p.x - BALL_R
+                } else {
+                    bdx = 1
+                    bx = p.x + PW + BALL_R
+                }
+                break
+            }
+        }
+
+        for (const o of obstacles) {
+            const dx = bx - o.x
+            const dy = by - o.y
+            const dist = Math.sqrt(dx * dx + dy * dy)
+            if (dist < BALL_R + OBS_R) {
+                const angle = Math.atan2(dy, dx)
+                bdx = Math.cos(angle) > 0 ? 1 : -1
+                bdy = Math.sin(angle) > 0 ? 1 : -1
+                bx = o.x + Math.cos(angle) * (BALL_R + OBS_R + 1)
+                by = o.y + Math.sin(angle) * (BALL_R + OBS_R + 1)
+                by = Math.max(BALL_R, Math.min(H - BALL_R, by))
+            }
+        }
+
+        if (bx - BALL_R <= 0) {
+            cpuScore++
+            if (cpuScore >= WIN_SCORE) gameOver = true
+            else resetBall()
+        } else if (bx + BALL_R >= W) {
+            playerScore++
+            if (playerScore >= WIN_SCORE) gameOver = true
+            else resetBall()
+        }
+    }
+
+    // Draw
+    function drawGame(py, ballX, ballY, obsYs, s1, s2, over) {
+        ctx.clearRect(0, 0, W, H)
+
         ctx.beginPath()
-        ctx.arc(x, y, 4, 0, Math.PI * 2)
+        ctx.arc(ballX, ballY, BALL_R, 0, Math.PI * 2)
         ctx.fillStyle = '#fff'
         ctx.fill()
         ctx.closePath()
+
+        ctx.fillStyle = '#fff'
+        for (let i = 0; i < paddles.length; i++) {
+            ctx.fillRect(paddles[i].x, py[i], PW, PH)
+        }
+
+        for (let i = 0; i < obstacles.length; i++) {
+            ctx.beginPath()
+            ctx.arc(obstacles[i].x, obsYs[i], OBS_R, 0, Math.PI * 2)
+            ctx.fillStyle = 'red'
+            ctx.fill()
+            ctx.closePath()
+            ctx.beginPath()
+            ctx.arc(obstacles[i].x, obsYs[i], OBS_INNER_R, 0, Math.PI * 2)
+            ctx.fillStyle = 'yellow'
+            ctx.fill()
+            ctx.closePath()
+        }
+
+        ctx.fillStyle = '#fff'
+        ctx.font = '28px monospace'
+        ctx.textAlign = 'center'
+        ctx.fillText(s1 + ' - ' + s2, W / 2, 35)
+
+        if (over) {
+            ctx.fillStyle = '#fff'
+            ctx.font = '36px monospace'
+            ctx.textAlign = 'center'
+            if (isMultiplayer || isGuest) {
+                ctx.fillText(s1 >= WIN_SCORE ? 'P1 WINS! / P1 GANA!' : 'P2 WINS! / P2 GANA!', W / 2, H / 2 - 10)
+            } else {
+                ctx.fillText(s1 >= WIN_SCORE ? 'YOU WIN! / GANASTE!' : 'CPU WINS! / CPU GANA!', W / 2, H / 2 - 10)
+            }
+            ctx.font = '16px monospace'
+            ctx.fillText('SPACE to restart / Toca para reiniciar', W / 2, H / 2 + 25)
+        }
     }
 
-    function ballMovement() {
-        if (dx == 1) {
-            x += 3
+    function drawNetInfo() {
+        if (isGuest || !gameId) return
+        ctx.fillStyle = '#444'
+        ctx.font = '13px monospace'
+        ctx.textAlign = 'center'
+        if (isMultiplayer) {
+            ctx.fillText('P2 connected / P2 conectado', W / 2, H - 10)
+        } else if (linkCopied) {
+            ctx.fillText('Link copied! / ¡Enlace copiado!', W / 2, H - 10)
         } else {
-            x -= 3
+            ctx.fillText('Click to copy invite link / Clic para copiar enlace', W / 2, H - 10)
         }
-
-        if (dy == 1) {
-            y -= 3
-        } else {
-            y += 3
-        }
-
-        if (y < 4) {
-            dy = -dy
-        } else if (y > canvas.height - 4) {
-            dy = -dy
-        }
-
-        if (x < 4) {
-            document.location.reload()
-        } else if (x > canvas.width - 4) {
-            document.location.reload()
-        }
-
-        
     }
 
-    function drawObstacles() {
-        ctx.beginPath()
-        ctx.arc(360, squarey, 16, 0, Math.PI * 2)
-        ctx.fillStyle = 'red'
-        ctx.fill()
-        ctx.closePath()
-        ctx.beginPath()
-        ctx.arc(360, squarey, 8, 0, Math.PI * 2)
-        ctx.fillStyle = 'yellow'
-        ctx.fill()
-        ctx.closePath()
-        ctx.beginPath()
-        ctx.arc(135, squarey, 16, 0, Math.PI * 2)
-        ctx.fillStyle = 'red'
-        ctx.fill()
-        ctx.closePath()
-        ctx.beginPath()
-        ctx.arc(135, squarey, 8, 0, Math.PI * 2)
-        ctx.fillStyle = 'yellow'
-        ctx.fill()
-        ctx.closePath()
-        ctx.beginPath()
-        ctx.arc(625, squarey, 16, 0, Math.PI * 2)
-        ctx.fillStyle = 'red'
-        ctx.fill()
-        ctx.closePath()
-        ctx.beginPath()
-        ctx.arc(625, squarey, 8, 0, Math.PI * 2)
-        ctx.fillStyle = 'yellow'
-        ctx.fill()
-        ctx.closePath()
-        ctx.beginPath()
-        ctx.arc(825, squarey, 16, 0, Math.PI * 2)
-        ctx.fillStyle = 'red'
-        ctx.fill()
-        ctx.closePath()
-        ctx.beginPath()
-        ctx.arc(825, squarey, 8, 0, Math.PI * 2)
-        ctx.fillStyle = 'yellow'
-        ctx.fill()
-        ctx.closePath()   
+    function lerpState(a, b, t) {
+        t = Math.max(0, Math.min(1.5, t))
+        return {
+            p: a.p.map((v, i) => v + (b.p[i] - v) * t),
+            b: [a.b[0] + (b.b[0] - a.b[0]) * t, a.b[1] + (b.b[1] - a.b[1]) * t],
+            o: a.o.map((v, i) => v + (b.o[i] - v) * t),
+            s: b.s,
+            g: b.g
+        }
     }
 
-    function ObstaclesMovement() {
-        if (dir == 0 && squarey + 16 < canvas.height) {
-            squarey += 4
-        } else if (dir == 1 && squarey > 0) {
-            squarey -= 4
+    // Game loop
+    function gameLoop() {
+        if (isGuest) {
+            if (conn && conn.open) {
+                conn.send({ up: upPressed || touchUp, down: downPressed || touchDown, restart: restartRequested })
+                restartRequested = false
+            }
+            if (receivedState) {
+                let s = receivedState
+                if (prevState && prevStateTime > 0) {
+                    const interval = stateTime - prevStateTime
+                    if (interval > 0) {
+                        const elapsed = performance.now() - stateTime
+                        const t = 1 + elapsed / interval
+                        s = lerpState(prevState, receivedState, Math.min(t, 1.5))
+                    }
+                }
+                drawGame(s.p, s.b[0], s.b[1], s.o, s.s[0], s.s[1], s.g)
+            } else {
+                ctx.clearRect(0, 0, W, H)
+                ctx.fillStyle = '#fff'
+                ctx.font = '24px monospace'
+                ctx.textAlign = 'center'
+                if (netError) {
+                    ctx.fillText('Connection failed / Conexión fallida', W / 2, H / 2)
+                } else {
+                    ctx.fillText('Connecting... / Conectando...', W / 2, H / 2)
+                }
+            }
         } else {
-            if (dir == 0) {
-                dir = 1
-            } else if (dir == 1) {
-                dir = 0
+            update()
+            drawGame(
+                paddles.map(p => p.y), bx, by,
+                obstacles.map(o => o.y),
+                playerScore, cpuScore, gameOver
+            )
+            drawNetInfo()
+            if (conn && conn.open) {
+                conn.send({
+                    p: paddles.map(p => Math.round(p.y)),
+                    b: [Math.round(bx), Math.round(by)],
+                    o: obstacles.map(o => Math.round(o.y)),
+                    s: [playerScore, cpuScore],
+                    g: gameOver ? 1 : 0
+                })
             }
         }
-        
+        requestAnimationFrame(gameLoop)
     }
 
-    function drawPaddle() {
-        ctx.fillRect(paddleX1, paddleY1, 10, 50)
-        ctx.fillRect(paddleX2, paddleY2, 10, 50)
-        ctx.fillRect(paddleX3, paddleY3, 10, 50)
-        ctx.fillRect(paddleX4, paddleY4, 10, 50)
-        ctx.fillRect(paddleX5, paddleY5, 10, 50)
-        ctx.fillRect(paddleX6, paddleY6, 10, 50)
-    }
-
-    function cleanCanvas() {
-        ctx.clearRect(0, 0, canvas.width, canvas.height)
-    }
-
-    function PaddleMovement() {
-        if (uppressed && paddleY1 > 0 && paddleY2 > 0) {
-            paddleY1 -= 3
-            paddleY2 -= 3
-            paddleY5 += 3   
-        } else if (downpressed && paddleY1 + 50 < canvas.height && paddleY2 + 50 < canvas.height) {
-            paddleY1 += 3
-            paddleY2 += 3
-            paddleY5 -= 3
-        }
-    }
-
-    function CpuMovement() {
-        if (directioncpu == 0 && paddleY3 + 50 < canvas.height && paddleY4 + 50 < canvas.height && oppositedirection == 1 && paddleY6 > 0) {
-            paddleY4 += 3
-            paddleY3 += 3
-            paddleY6 -= 3
-        } else if (directioncpu == 1 && paddleY3 > 0 && paddleY4 > 0 && oppositedirection == 0 && paddleY6 + 50 < canvas.height) {
-            paddleY4 -= 3
-            paddleY3 -= 3
-            paddleY6 += 3
-        } else {
-            if (directioncpu == 0 && oppositedirection == 1) {
-                directioncpu = 1
-                oppositedirection = 0
-            } else if (directioncpu == 1 && oppositedirection == 0) {
-                directioncpu = 0
-                oppositedirection = 1
-            }
-        }
-    }
-
-    function initEvents() {
-        document.addEventListener('keydown', keyDownHandler)
-        document.addEventListener('keyup', keyUpHandler)
-
-        function keyDownHandler (event) {
-            const {key} = event
-            if (key == 'ArrowUp' ) {
-                uppressed = true
-            } else if (key == 'ArrowDown') {
-                downpressed = true
-            }
-        }
-        function keyUpHandler (event) {
-            const {key} = event
-            if (key == 'ArrowUp') {
-                uppressed = false
-            } else if (key == 'ArrowDown') {
-                downpressed = false
-            }
-        }
-    }
-
-     function collisionDetection() {
-        if (x >= paddleX1 - 7 && x <= paddleX1 && y <= paddleY1 + 45 && y >= paddleY1 - 45) {
-            dx = -dx
-        } else if (x >= paddleX2 - 7 && x <= paddleX2 && y <= paddleY2 + 45 && y >= paddleY2 - 45) {
-            dx = -dx
-        } else if (x >= paddleX3 - 7 && x <= paddleX3 && y <= paddleY3 + 45 && y >= paddleY3 - 45) {
-            dx = -dx
-        } else if (x >= paddleX4 - 7 && x <= paddleX4 && y <= paddleY4 + 45 && y >= paddleY4 - 45) {
-            dx = -dx
-        } else if (x >= paddleX5 - 7 && x <= paddleX5 && y <= paddleY5 + 45 && y >= paddleY5 - 45) {
-            dx = -dx
-        } else if (x >= paddleX6 - 7 && x <= paddleX6 && y <= paddleY6 + 45 && y >= paddleY6 - 45) {
-            dx = -dx
-        } else if (x >= paddleX1 + 7 && x <= paddleX1 && y <= paddleY1 + 45 && y >= paddleY1 - 45) {
-            dx = -dx
-        } else if (x >= paddleX2 + 7 && x <= paddleX2 && y <= paddleY2 + 45 && y >= paddleY2 - 45) {
-            dx = -dx
-        } else if (x >= paddleX3 + 7 && x <= paddleX3 && y <= paddleY3 + 45 && y >= paddleY3 - 45) {
-            dx = -dx
-        } else if (x >= paddleX4 + 7 && x <= paddleX4 && y <= paddleY4 + 45 && y >= paddleY4 - 45) {
-            dx = -dx
-        } else if (x >= paddleX5 + 7 && x <= paddleX5 && y <= paddleY5 + 45 && y >= paddleY5 - 45) {
-            dx = -dx
-        } else if (x >= paddleX6 + 7 && x <= paddleX6 && y <= paddleY6 + 45 && y >= paddleY6 - 45) {
-            dx = -dx
-        }
-     }
-
-    function draw() {
-        cleanCanvas()
-        drawball()
-        drawPaddle()
-        drawObstacles()
-
-        PaddleMovement()
-        CpuMovement()
-        ObstaclesMovement()
-        ballMovement()
-        collisionDetection()
-        window.requestAnimationFrame(draw)
-    }
-
-    draw()
-    initEvents()
+    gameLoop()
 </script>
